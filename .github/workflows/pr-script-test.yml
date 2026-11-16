@@ -49,12 +49,6 @@ on:
         required: false
         type: string
         default: ""
-      # Until both callers pass screenshots_client_id.
-      screenshots_app_id:
-        description: "Deprecated: use screenshots_client_id"
-        required: false
-        type: string
-        default: ""
     secrets:
       screenshots_app_key:
         description: "Private key of that App"
@@ -494,12 +488,11 @@ jobs:
       # job never runs PR code; the test job never gets this token. A missing
       # or broken App costs the pictures, never the report.
       - id: shots_token
-        if: inputs.screenshots_client_id != '' || inputs.screenshots_app_id != ''
+        if: inputs.screenshots_client_id != ''
         continue-on-error: true
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ inputs.screenshots_client_id }}
-          app-id: ${{ inputs.screenshots_client_id == '' && inputs.screenshots_app_id || '' }}
           private-key: ${{ secrets.screenshots_app_key }}
           owner: community-scripts
           repositories: ci
