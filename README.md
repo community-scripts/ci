@@ -1,2 +1,47 @@
-# ci-screenshots
-Screenshots from the PR script tests of ProxmoxVE and DevScripts, shown in PR comments. History is squashed weekly.
+# ci
+
+Shared CI for [ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) and
+[DevScripts](https://github.com/community-scripts/DevScripts).
+
+## What is here
+
+| Path | What |
+|---|---|
+| `.github/workflows/pr-script-test.yml` | Reusable workflow: builds the `ct/` and `vm/` scripts a PR touches on the Proxmox and Incus lab hosts (and ARM64), reports on the PR |
+| `.github/workflows/arm-script-test.yml` | Reusable workflow: one `ct/` script on GitHub's arm64 runner, by hand |
+| `.github/workflows/screenshots-cleanup.yml` | Weekly: squashes the `screenshots` branch to the folders of open PRs and issues |
+| `scripts/` | The harness the test jobs run (`pve-run-script.sh`, `pve-run-vm.sh`, `arm-runner-setup.sh`) |
+| branch `screenshots` | Pictures for the PR comments, as `<repository>/<pr\|issue>-<number>/`. Not code; never merge it |
+
+## How the repositories use it
+
+Each repository keeps a small `pr-script-test.yml` with the triggers
+(`pull_request_target`, `/test` comments, the "Ready For Testing" label,
+`workflow_dispatch`) and the per-PR concurrency queue, and calls:
+
+```yaml
+uses: community-scripts/ci/.github/workflows/pr-script-test.yml@main
+```
+
+A called workflow runs in the caller's context: its `github.token`, its
+self-hosted runners (`proxmox-test`, `incus-test`), its PRs and checks.
+`github.repository` decides which URLs get rewritten and which container ID
+range is used, as before.
+
+**A change on `main` here goes live in both repositories at once.** Whoever
+can push here can change what runs with their tokens, so this repository
+needs the same people and the same branch protection as they have.
+
+## Screenshots
+
+The report job writes them with a GitHub App token limited to this
+repository (`contents: write`). Each caller needs:
+
+- variable `GHAPP_SCREENSHOTS_ID`: the App's ID
+- secret `GHAPP_SCREENSHOTS_PRIVATE_KEY`: its private key
+
+(organization-level works for both). Without them the report still goes
+out, just without pictures. The test jobs never see the token.
+
+After the weekly cleanup the branch is a single commit, so its size stays at
+roughly what open PRs need. Pictures of closed PRs disappear then.
