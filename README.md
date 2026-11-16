@@ -10,7 +10,10 @@ Shared CI for [ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) and
 | `.github/workflows/pr-script-test.yml` | Reusable workflow: builds the `ct/` and `vm/` scripts a PR touches on the Proxmox and Incus lab hosts (and ARM64), reports on the PR |
 | `.github/workflows/arm-script-test.yml` | Reusable workflow: one `ct/` script on GitHub's arm64 runner, by hand |
 | `.github/workflows/screenshots-cleanup.yml` | Weekly: deletes the screenshots of closed PRs and issues |
+| `.github/workflows/update-script-timestamp.yml` | Reusable workflow: stamps the PocketBase record of scripts changed on main (`mode: main` for ProxmoxVE, `dev` for DevScripts) |
+| `.github/workflows/pr-test-command.yml` | Reusable workflow: posts a copy-paste test command on PRs |
 | `scripts/` | The harness the test jobs run (`pve-run-script.sh`, `pve-run-vm.sh`, `arm-runner-setup.sh`) |
+| `scripts/host/` | Setup of the lab: test hosts (`pve-ci-host-setup.sh`, `incus-ci-host-setup.sh`) and the single-use controller on prox1 (`ci-controller-setup.sh`, `ci-vm-controller.sh`, `gh-dispatch.sh`). Copied to the hosts by hand, never run by a workflow |
 | `screenshots/` | Pictures for the PR comments, as `screenshots/<repository>/<pr\|issue>-<number>/`, written by the report job |
 
 ## How the repositories use it
