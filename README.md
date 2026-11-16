@@ -9,9 +9,9 @@ Shared CI for [ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) and
 |---|---|
 | `.github/workflows/pr-script-test.yml` | Reusable workflow: builds the `ct/` and `vm/` scripts a PR touches on the Proxmox and Incus lab hosts (and ARM64), reports on the PR |
 | `.github/workflows/arm-script-test.yml` | Reusable workflow: one `ct/` script on GitHub's arm64 runner, by hand |
-| `.github/workflows/screenshots-cleanup.yml` | Weekly: squashes the `screenshots` branch to the folders of open PRs and issues |
+| `.github/workflows/screenshots-cleanup.yml` | Weekly: deletes the screenshots of closed PRs and issues |
 | `scripts/` | The harness the test jobs run (`pve-run-script.sh`, `pve-run-vm.sh`, `arm-runner-setup.sh`) |
-| branch `screenshots` | Pictures for the PR comments, as `<repository>/<pr\|issue>-<number>/`. Not code; never merge it |
+| `screenshots/` | Pictures for the PR comments, as `screenshots/<repository>/<pr\|issue>-<number>/`, written by the report job |
 
 ## How the repositories use it
 
@@ -37,11 +37,14 @@ needs the same people and the same branch protection as they have.
 The report job writes them with a GitHub App token limited to this
 repository (`contents: write`). Each caller needs:
 
-- variable `GHAPP_SCREENSHOTS_ID`: the App's ID
+- variable `GHAPP_SCREENSHOTS_CLIENT_ID`: the App's client ID (`Iv23…`)
 - secret `GHAPP_SCREENSHOTS_PRIVATE_KEY`: its private key
 
 (organization-level works for both). Without them the report still goes
 out, just without pictures. The test jobs never see the token.
 
-After the weekly cleanup the branch is a single commit, so its size stays at
-roughly what open PRs need. Pictures of closed PRs disappear then.
+They are committed straight to `main`, so pull before you push here. The
+weekly cleanup deletes the folders of closed PRs and issues (their pictures
+disappear from the old comments then); the history keeps them, `main` is never
+force-pushed. If `main` gets a ruleset, the App and `github-actions[bot]` need
+to be allowed to bypass it.

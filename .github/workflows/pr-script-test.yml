@@ -36,16 +36,22 @@ name: PR script test
 # self-hosted runners are the caller's. The harness scripts come from this
 # repository, at the same commit as this file.
 #
-# Screenshots go to the `screenshots` branch of this repository (a comment
-# can only show an image that has a URL), written with a GitHub App token
-# limited to this repository. Without the App the report still works, just
-# without pictures.
+# Screenshots go to screenshots/ on main of this repository (a comment can
+# only show an image that has a URL), written with a GitHub App token limited
+# to this repository. Without the App the report still works, just without
+# pictures.
 
 on:
   workflow_call:
     inputs:
+      screenshots_client_id:
+        description: "Client ID of the GitHub App that may write to community-scripts/ci (empty = no screenshots in the comment)"
+        required: false
+        type: string
+        default: ""
+      # Until both callers pass screenshots_client_id.
       screenshots_app_id:
-        description: "ID of the GitHub App that may write to community-scripts/ci (empty = no screenshots in the comment)"
+        description: "Deprecated: use screenshots_client_id"
         required: false
         type: string
         default: ""
@@ -488,11 +494,12 @@ jobs:
       # job never runs PR code; the test job never gets this token. A missing
       # or broken App costs the pictures, never the report.
       - id: shots_token
-        if: inputs.screenshots_app_id != ''
+        if: inputs.screenshots_client_id != '' || inputs.screenshots_app_id != ''
         continue-on-error: true
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ inputs.screenshots_app_id }}
+          client-id: ${{ inputs.screenshots_client_id }}
+          app-id: ${{ inputs.screenshots_client_id == '' && inputs.screenshots_app_id || '' }}
           private-key: ${{ secrets.screenshots_app_key }}
           owner: community-scripts
           repositories: ci
@@ -585,38 +592,26 @@ jobs:
             const coreRows = rows.filter(r => !isArm(r));
             const armRows = rows.filter(isArm);
 
-            // Screenshots go to the orphan `screenshots` branch of
-            // community-scripts/ci, because a comment can only show an image
-            // that has a URL. One file per repository, PR and script,
-            // overwritten on every run. The branch is squashed every week and
-            // keeps open PRs and issues only, so the link names the branch, not
-            // a commit (which the squash drops); ?v= keeps caches from showing
-            // an older picture. The PNG comes from the host that ran the PR's
-            // code: check it again.
+            // Screenshots go to screenshots/ on main of community-scripts/ci,
+            // because a comment can only show an image that has a URL. One file
+            // per repository, PR and script, overwritten on every run; the
+            // weekly cleanup deletes those of closed PRs and issues. The link
+            // names the branch; ?v= keeps caches from showing an older picture.
+            // The PNG comes from the host that ran the PR's code: check it again.
             const SHOTS = { owner: 'community-scripts', repo: 'ci' };
-            const BRANCH = 'screenshots';
+            const BRANCH = 'main';
             const shotsApi = process.env.SHOTS_TOKEN ? getOctokit(process.env.SHOTS_TOKEN) : null;
             if (!shotsApi && rows.some(r => r.shot_file || r.shot_update_file)) core.warning('No token for community-scripts/ci: the comment goes out without screenshots');
             const prNum = Number(process.env.PR);
             const isPng = buf => buf.length > 8 && buf.length < 3000000 &&
               buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-            const ensureBranch = async () => {
-              try { await shotsApi.rest.git.getRef({ ...SHOTS, ref: `heads/${BRANCH}` }); return; }
-              catch (e) { if (e.status !== 404) throw e; }
-              const { data: blob } = await shotsApi.rest.git.createBlob({ ...SHOTS, encoding: 'utf-8',
-                content: 'Screenshots taken by pr-script-test.yml for the PR comments, as <repository>/<pr|issue>-<number>/. Not code; never merge this branch. Squashed every week by screenshots-cleanup.yml.\n' });
-              const { data: tree } = await shotsApi.rest.git.createTree({ ...SHOTS, tree: [{ path: 'README.md', mode: '100644', type: 'blob', sha: blob.sha }] });
-              const { data: commit } = await shotsApi.rest.git.createCommit({ ...SHOTS, message: 'Start screenshots', tree: tree.sha, parents: [] });
-              await shotsApi.rest.git.createRef({ ...SHOTS, ref: `refs/heads/${BRANCH}`, sha: commit.sha });
-            };
             const uploadShot = async (r, local, suffix) => {
               if (!shotsApi) return '';
               const buf = fs.readFileSync(local);
               if (!isPng(buf)) { core.warning(`${r.script}: screenshot is not a plausible PNG, skipped`); return ''; }
-              const file = `${repo}/${process.env.KIND === 'issue' ? 'issue' : 'pr'}-${prNum}/${r.name}${suffix}.png`;
+              const file = `screenshots/${repo}/${process.env.KIND === 'issue' ? 'issue' : 'pr'}-${prNum}/${r.name}${suffix}.png`;
               for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                  await ensureBranch();
                   let sha;
                   try { sha = (await shotsApi.rest.repos.getContent({ ...SHOTS, path: file, ref: BRANCH })).data.sha; }
                   catch (e) { if (e.status !== 404) throw e; }

@@ -1,14 +1,14 @@
 name: Screenshots cleanup
 
-# The `screenshots` branch holds the pictures pr-script-test.yml shows in PR
-# and issue comments, as <repository>/<pr|issue>-<number>/. Every run adds a
-# commit, and git never forgets a blob, so once a week the branch is replaced
-# by a single fresh commit with the folders of open PRs and issues only.
-# Closed ones lose their pictures; everything else keeps its URL, because
-# the comments link by branch, not by commit.
+# screenshots/ on main holds the pictures pr-script-test.yml shows in PR and
+# issue comments, as screenshots/<repository>/<pr|issue>-<number>/. Once a
+# week the folders of closed PRs and issues are deleted in one commit, so the
+# tree only holds what open ones need. Their pictures disappear from the old
+# comments then. History is kept: main also holds the workflows, and is never
+# force-pushed.
 #
-# A report that pushes a screenshot while this runs makes the push fail
-# (--force-with-lease); it is retried from the new head, so nothing is lost.
+# A report that pushes a screenshot while this runs makes the push fail; it
+# is retried on top of the new head.
 
 on:
   schedule:
@@ -16,32 +16,29 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # this repository only: the screenshots branch
+  contents: write # this repository only
 
 concurrency:
   group: screenshots-cleanup
   cancel-in-progress: false
 
 jobs:
-  squash:
+  cleanup:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Keep open PRs and issues, drop the history
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Delete screenshots of closed PRs and issues
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH: screenshots
           # Only these repositories write here; any other folder is dropped.
           SOURCES: "ProxmoxVE DevScripts"
         run: |
           set -euo pipefail
-          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if ! git ls-remote --exit-code "$url" "refs/heads/${BRANCH}" >/dev/null; then
-            echo "No ${BRANCH} branch yet, nothing to do"
-            exit 0
-          fi
-          git init -q work
-          cd work
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -57,41 +54,35 @@ jobs:
             [[ "$state" == "open" ]]
           }
 
-          for attempt in 1 2 3; do
-            git fetch -q --depth 1 "$url" "refs/heads/${BRANCH}"
-            old=$(git rev-parse FETCH_HEAD)
-            git read-tree --reset FETCH_HEAD
-            kept=0 dropped=0
-            while IFS= read -r dir; do
-              src=${dir%%/*} item=${dir#*/}
-              keep=0
-              if [[ " $SOURCES " == *" $src "* && "$item" =~ ^(pr|issue)-([0-9]+)$ ]] && is_open "$src" "${BASH_REMATCH[2]}"; then
-                keep=1
-              fi
-              if (( keep )); then
-                kept=$((kept + 1))
-              else
-                git rm -r -q --cached -- "$dir"
-                dropped=$((dropped + 1))
-              fi
-            done < <(git ls-tree -d --name-only FETCH_HEAD | while IFS= read -r top; do
-                       git ls-tree -d --name-only "FETCH_HEAD:$top" | sed "s#^#$top/#"
-                     done)
-            # Loose files and unknown top-level folders: only README.md stays.
-            { git ls-files | grep -vE '^(README\.md|[^/]+/(pr|issue)-[0-9]+/.*)$' || true; } | xargs -r git rm -q --cached --
-            tree=$(git write-tree)
-            new=$(git commit-tree "$tree" -m "Screenshots of open PRs and issues as of $(date -u +%F) (history squashed)")
-            if git push -q --force-with-lease="refs/heads/${BRANCH}:${old}" "$url" "${new}:refs/heads/${BRANCH}"; then
-              size=$(git cat-file --batch-check='%(objectsize)' < <(git ls-tree -r "$tree" | awk '{print $3}') | awk '{s+=$1} END {printf "%.1f", s/1048576}')
-              {
-                echo "### Screenshots squashed"
-                echo
-                echo "Kept ${kept} folder(s) of open PRs and issues, dropped ${dropped}. Branch now ${size} MB in one commit."
-              } >>"$GITHUB_STEP_SUMMARY"
-              exit 0
+          [[ -d screenshots ]] || { echo "No screenshots/ yet, nothing to do"; exit 0; }
+          kept=0 dropped=0
+          while IFS= read -r dir; do
+            rel=${dir#screenshots/} src=${rel%%/*} item=${rel#*/}
+            if [[ " $SOURCES " == *" $src "* && "$item" =~ ^(pr|issue)-([0-9]+)$ ]] && is_open "$src" "${BASH_REMATCH[2]}"; then
+              kept=$((kept + 1))
+            else
+              git rm -r -q -- "$dir"
+              dropped=$((dropped + 1))
             fi
-            echo "::notice::${BRANCH} moved while squashing (a report pushed); trying again"
-            sleep $((attempt * 20))
+          done < <(find screenshots -mindepth 2 -maxdepth 2 -type d | sort)
+          # Loose files under screenshots/ (outside a PR or issue folder) go too.
+          { git ls-files screenshots | grep -vE '^screenshots/[^/]+/(pr|issue)-[0-9]+/' || true; } | xargs -r git rm -q --
+
+          if git diff --cached --quiet; then
+            echo "Nothing to delete (${kept} open)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git commit -q -m "Screenshots: delete ${dropped} folder(s) of closed PRs and issues"
+          for attempt in 1 2 3; do
+            git push -q origin HEAD:main && break
+            [[ $attempt == 3 ]] && { echo "::error::main kept moving; try again later"; exit 1; }
+            echo "::notice::main moved (a report pushed); rebasing and trying again"
+            sleep $((attempt * 10))
+            git pull -q --rebase origin main
           done
-          echo "::error::${BRANCH} kept moving; try again later"
-          exit 1
+          size=$(du -sm screenshots 2>/dev/null | cut -f1 || echo 0)
+          {
+            echo "### Screenshots cleaned up"
+            echo
+            echo "Kept ${kept} folder(s) of open PRs and issues, deleted ${dropped}. screenshots/ is now about ${size} MB."
+          } >>"$GITHUB_STEP_SUMMARY"
