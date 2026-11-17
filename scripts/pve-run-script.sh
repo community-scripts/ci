@@ -368,6 +368,24 @@ trap 'exit 130' INT
 # PR (check, comment, review) and the job exits 0 -- a red run per broken app
 # would only be notification noise. Only trouble with the test setup itself
 # (setup_error) fails the job, because that is ours to look at.
+# A failed run says what the check saw, rarely why: a service that crash-loops
+# slowly is never "failed", and its own log says what went wrong. Keep the
+# state of every service and the journal since boot as journal.log in the
+# result artifact. systemd containers only; best effort.
+save_journal() {
+  [[ "$kind" == ct && -n "$ctid" ]] && guest_running || return 0
+  guest_exec sh -c 'command -v journalctl' &>/dev/null || return 0
+  {
+    echo "### systemctl list-units --type=service --all"
+    guest_exec systemctl list-units --type=service --all --no-pager --plain 2>&1
+    echo
+    echo "### journalctl -b (last 2000 lines)"
+    guest_exec journalctl -b --no-pager -o short-iso -n 2000 2>&1
+  } >"$OUT_DIR/journal.log" 2>&1 || true
+  [[ -s "$OUT_DIR/journal.log" ]] && notes+=("the container's services and journal are in journal.log in the \`result-*\` artifact")
+  return 0
+}
+
 fail() {
   step="$1"
   status="${2:-fail}"
@@ -376,6 +394,7 @@ fail() {
     status="error"
     step="the install before this PR (${UPSTREAM}@${BASE_SHA:0:7}) failed, so the upgrade was not tested: $1"
   fi
+  save_journal
   finish
   echo "::warning title=${SCRIPT}::${step}"
   exit 0
