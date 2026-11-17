@@ -471,6 +471,10 @@ touch "$RAW_LOG.start"
 # A script that hands over to upstream's own installer (run_external_installer)
 # asks first; nobody can answer in CI, and testing the script means running it.
 build_env+=(var_external_installer=yes)
+# A script disabled on the website (is_disabled in PocketBase) stops the engine
+# before it builds. CI tests the code in the PR, which is usually the fix that
+# gets it enabled again, so go past that check.
+build_env+=(var_ignore_disable=yes)
 # Both engines turn var_github_token into GITHUB_TOKEN inside the container.
 [[ -n "${GH_API_TOKEN:-}" ]] && build_env+=(var_github_token="$GH_API_TOKEN")
 # How much API quota this build starts with, with the token and without (the
@@ -489,7 +493,7 @@ echo "GitHub API quota: token $(gh_quota "${GH_API_TOKEN:-}") · no token $(gh_q
 # CI value here. The names come from json/<app>.json app_vars (DevScripts) and
 # from the read/prompt_ lines of the install script (both repos). A bare `read`
 # that ignores its variable still fails, and the report says why.
-ENGINE_VARS=" var_ctid var_hostname var_os var_version var_cpu var_ram var_disk var_brg var_net var_container_storage var_template_storage var_unprivileged var_tags var_arm64 var_testurl var_verbose var_timezone var_http_proxy var_http_no_proxy var_appversion var_github_token "
+ENGINE_VARS=" var_ctid var_hostname var_os var_version var_cpu var_ram var_disk var_brg var_net var_container_storage var_template_storage var_unprivileged var_tags var_arm64 var_testurl var_verbose var_timezone var_http_proxy var_http_no_proxy var_appversion var_github_token var_ignore_disable "
 host_app=$(tr -c 'a-z0-9-\n' '-' <<<"${app,,}")
 ci_value() {
   case "${1,,}" in
@@ -747,7 +751,7 @@ run_update() {
   # timeout runs a program, not a shell function, so spell out the exec here.
   if [[ "$PLATFORM" == "incus" ]]; then guest_cmd=(incus exec "$ctid" --); else guest_cmd=(pct exec "$ctid" --); fi
   timeout --kill-after=1m "$UPDATE_TIMEOUT" "${guest_cmd[@]}" env PHS_SILENT=1 mode=default MODE=default \
-    TERM=dumb DIAGNOSTICS=no var_ignore_breaking_changes=yes var_external_installer=yes ${GH_API_TOKEN:+GITHUB_TOKEN="$GH_API_TOKEN"} update </dev/null \
+    TERM=dumb DIAGNOSTICS=no var_ignore_breaking_changes=yes var_ignore_disable=yes var_external_installer=yes ${GH_API_TOKEN:+GITHUB_TOKEN="$GH_API_TOKEN"} update </dev/null \
     > >(tee "$raw" | live_filter) 2>&1 &
   update_pid=$!
   wait "$update_pid"
