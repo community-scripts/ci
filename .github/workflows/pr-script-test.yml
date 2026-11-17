@@ -9,10 +9,11 @@ name: PR script test
 # unattended. They are isolated, hold no secret, and are treated as
 # compromised anyway; the sweeper and fresh guests per build keep them usable.
 # Someone with write access can also comment `/test` (optionally followed by
-# a full SHA to pin, the scripts to build, and the platforms to build on) to
-# build again or pick what to build. Only a commit that existed when the
-# comment was written gets built: a push after it is never covered, not even
-# one that lands in the seconds before this job runs.
+# a full SHA to pin, the scripts to build, the platforms to build on, and
+# `var_<name>=<value>` app settings) to build again or pick what to build.
+# Only a commit that existed when the comment was written gets built: a push
+# after it is never covered, not even one that lands in the seconds before
+# this job runs.
 #
 # Approval stays narrow: only PRs the push-app-to-main app opens on a branch
 # of this repository (a script moving over from DevScripts, reviewed and
@@ -82,6 +83,7 @@ jobs:
       kind: ${{ steps.plan.outputs.kind }}
       platforms: ${{ steps.plan.outputs.platforms }}
       base_sha: ${{ steps.plan.outputs.base_sha }}
+      test_env: ${{ steps.plan.outputs.test_env }}
     steps:
       - id: plan
         uses: actions/github-script@v9
@@ -203,7 +205,13 @@ jobs:
             const platformOf = t => PLATFORM[t.toLowerCase()];
             const only = new Set(words.map(platformOf).filter(Boolean));
             const onlyList = ['pve', 'incus', 'arm'].filter(p => only.has(p));
-            const tokens = words.filter(t => !platformOf(t));
+            // `var_<name>=<value>` words set an app's own settings for this run,
+            // e.g. `/test n8n var_n8n_image_tag=3.3.0` to try a prerelease. They
+            // reach the install and both updates: the engine carries var_* into
+            // the container on Proxmox and on Incus. ct/ scripts only.
+            const isSetting = t => t.includes('=');
+            const settings = words.filter(isSetting);
+            const tokens = words.filter(t => !platformOf(t) && !isSetting(t));
             const isSha = t => /^[0-9a-f]{7,40}$/.test(t);
             // App names (bark-server) become ct/ paths; such a name without a
             // ct/ script falls back to vm/ below.
@@ -220,6 +228,23 @@ jobs:
               await sticky([MARK, '### Proxmox script test', '', `⚠️ ${why} Nothing was built.`, '', retry].join('\n'));
               core.notice(why);
             };
+            // What the harness decides itself (container ID, storage, network,
+            // OS, architecture) or what changes how the run is driven cannot be
+            // set. Values end up on a command line: a plain character set only.
+            const HARNESS_VARS = new Set(['var_ctid', 'var_hostname', 'var_brg', 'var_bridge', 'var_net', 'var_os', 'var_arm64',
+              'var_container_storage', 'var_template_storage', 'var_testurl', 'var_verbose', 'var_full_verbose', 'var_unattended', 'var_install']);
+            const badSettings = settings.filter(t => {
+              const k = t.slice(0, t.indexOf('=')), v = t.slice(t.indexOf('=') + 1);
+              return !/^var_[a-z0-9_]{1,40}$/.test(k) || HARNESS_VARS.has(k) || !/^[A-Za-z0-9._:\/@+,=-]{0,200}$/.test(v);
+            });
+            if (badSettings.length) {
+              await refuse(
+                `${badSettings.map(t => '`' + t.replace(/[`\r\n]/g, '').slice(0, 80) + '`').join(', ')} cannot be set: settings are \`var_<name>=<value>\` (lower case name; letters, digits and \`. _ : / @ + , = -\` in the value), and not one the test decides itself (${[...HARNESS_VARS].map(k => '`' + k + '`').join(', ')}).`,
+                'For example: `/test n8n var_n8n_image_tag=3.3.0`.');
+              return;
+            }
+            const testEnv = settings.join(' ');
+            const withSettings = settings.length ? `with ${settings.map(t => '`' + t + '`').join(' ')}` : '';
             if (isIssue) {
               // The default branch is trusted; only which app is needed.
               if (entries.length === 0) {
@@ -370,7 +395,7 @@ jobs:
               const { data: check } = await github.rest.checks.create({
                 // A partial run gets its own name: it must not stand in for the
                 // full test, e.g. as a required check.
-                owner, repo, name: `Proxmox script test${onlyList.length ? ` (${onlyList.join(', ')} only)` : ''}`, head_sha: headSha, status: 'in_progress',
+                owner, repo, name: `Proxmox script test${onlyList.length ? ` (${onlyList.join(', ')} only)` : ''}${settings.length ? ' (with settings)' : ''}`, head_sha: headSha, status: 'in_progress',
                 details_url: runUrl,
                 output: { title: `Building ${include.length}`, summary: include.map(i => `- \`${i.script}\` ${[i.platform, i.os, i.mode].filter(Boolean).join(' · ')}`).join('\n') },
               });
@@ -385,12 +410,13 @@ jobs:
             core.setOutput('not_built', JSON.stringify(notBuilt));
             core.setOutput('platforms', onlyList.join(' '));
             core.setOutput('base_sha', baseSha);
+            core.setOutput('test_env', testEnv);
             // Who asked: the /test commenter, or whoever dispatched the run.
             core.setOutput('actor', context.actor);
 
             await sticky([
               MARK, '### Proxmox script test', '',
-              `⏳ Building ${include.length} at ${headSha.slice(0, 7)}${isIssue ? ' (default branch)' : ''}${onlyList.length ? `, only on ${onlyList.join(', ')}` : ''} — [watch it live](${runUrl}) (open the \`test\` job)`, '',
+              `⏳ Building ${include.length} at ${headSha.slice(0, 7)}${isIssue ? ' (default branch)' : ''}${onlyList.length ? `, only on ${onlyList.join(', ')}` : ''}${withSettings ? `, ${withSettings}` : ''} — [watch it live](${runUrl}) (open the \`test\` job)`, '',
               ...include.map(i => `- \`${i.script}\` (${[i.platform, i.os, i.mode && 'upgrade from the base branch'].filter(Boolean).join(' · ')})`),
               ...(notBuilt.length ? ['', '**Not built:**', ...notBuilt.map(n => `- ${n}`)] : []),
             ].join('\n'));
@@ -444,6 +470,8 @@ jobs:
           # upgrade: install from the base branch, update with the PR.
           TEST_MODE: ${{ matrix.mode || '' }}
           BASE_SHA: ${{ needs.gate.outputs.base_sha }}
+          # var_<name>=<value> words from the /test, checked by the gate.
+          TEST_ENV: ${{ needs.gate.outputs.test_env }}
           UPSTREAM: ${{ github.repository }}
           CTID_BASE: ${{ github.repository == 'community-scripts/ProxmoxVE' && '9050' || '9000' }}
           # Only so release lookups are not rate limited: unauthenticated, all
@@ -454,7 +482,7 @@ jobs:
         # The self-hosted runners run as root; the GitHub one needs sudo (pct
         # and incus do).
         run: >-
-          ${{ matrix.platform == 'arm' && 'sudo --preserve-env=PR_REPO,PR_SHA,SCRIPT,OS,PLATFORM,VAR_ARM64,TEST_MODE,BASE_SHA,UPSTREAM,CTID_BASE,GH_API_TOKEN,OUT_DIR,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT' || '' }}
+          ${{ matrix.platform == 'arm' && 'sudo --preserve-env=PR_REPO,PR_SHA,SCRIPT,OS,PLATFORM,VAR_ARM64,TEST_MODE,BASE_SHA,TEST_ENV,UPSTREAM,CTID_BASE,GH_API_TOKEN,OUT_DIR,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT' || '' }}
           bash scripts/pve-run-script.sh
 
       - if: always() && matrix.platform == 'arm'
@@ -511,6 +539,7 @@ jobs:
           TRUSTED: ${{ needs.gate.outputs.trusted }}
           KIND: ${{ needs.gate.outputs.kind }}
           PLATFORMS: ${{ needs.gate.outputs.platforms }}
+          TEST_ENV: ${{ needs.gate.outputs.test_env }}
         with:
           script: |
             const fs = require('fs');
@@ -649,7 +678,10 @@ jobs:
             // Built on only some platforms (`/test pve`): a pass there says
             // nothing about the others, so it neither approves nor lifts an
             // earlier "changes requested". A failure is still a failure.
-            const partial = !!process.env.PLATFORMS;
+            // Built with settings (`/test var_x=y`): the same, it is not the
+            // script as users get it.
+            const partial = !!process.env.PLATFORMS || !!process.env.TEST_ENV;
+            const again = [process.env.PLATFORMS, process.env.TEST_ENV].filter(Boolean).join(' ');
             const cancelled = (armOnly ? rows : coreRows).every(r => r.status === 'cancelled');
             const of = `**${passed}/${coreRows.length} passed**`;
             const armPassed = armRows.filter(r => r.status === 'pass').length;
@@ -759,11 +791,12 @@ jobs:
                      ...measured.map(r => `| \`${r.script}\` | ${where(r)} | ${clean(r.resources)} |`), '', '</details>', '']
                   : [];
               })(),
-              ...(partial ? [`<sub>Built only on ${process.env.PLATFORMS.split(' ').join(', ')}; comment \`/test\` for every platform.</sub>`, ''] : []),
+              ...(process.env.PLATFORMS ? [`<sub>Built only on ${process.env.PLATFORMS.split(' ').join(', ')}; comment \`/test\` for every platform.</sub>`, ''] : []),
+              ...(process.env.TEST_ENV ? [`<sub>Built with ${process.env.TEST_ENV.split(' ').map(t => '\`' + t + '\`').join(' ')}; comment \`/test\` for the defaults.</sub>`, ''] : []),
               ...shots, '',
               ...(() => { try { const n = JSON.parse(process.env.NOT_BUILT || '[]'); return n.length ? ['**Not built:**', ...n.map(x => `- ${x}`), ''] : []; } catch (e) { return []; } })(),
               ...logs, '',
-              `Full logs: [workflow run](${runUrl}) (artifacts \`result-*\`). Comment \`/test${partial ? ` ${process.env.PLATFORMS}` : ''}${process.env.KIND === 'issue' ? ' ' + [...new Set(rows.map(r => r.script.slice(3, -3)))].join(' ') : ''}\` to build again.`,
+              `Full logs: [workflow run](${runUrl}) (artifacts \`result-*\`). Comment \`/test${again ? ` ${again}` : ''}${process.env.KIND === 'issue' ? ' ' + [...new Set(rows.map(r => r.script.slice(3, -3)))].join(' ') : ''}\` to build again.`,
             ].join('\n');
 
             // Issues have no check run (there is no PR commit to attach it to).

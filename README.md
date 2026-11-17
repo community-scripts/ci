@@ -31,6 +31,24 @@ self-hosted runners (`proxmox-test`, `incus-test`), its PRs and checks.
 `github.repository` decides which URLs get rewritten and which container ID
 range is used, as before.
 
+## `/test` options
+
+A `/test` comment (write access needed) can be followed by, in any order:
+
+- a full 40-character SHA: build exactly that commit, while it is the PR head
+- app names or `ct/<name>.sh` / `vm/<name>.sh` paths: build only those
+- platforms `pve`, `incus`, `arm`: build only there
+- `var_<name>=<value>` settings for the app, e.g.
+  `/test n8n var_n8n_image_tag=3.3.0 var_force_breaking_update=yes`. They are
+  set for the install and for both updates (the engine carries `var_*` into the
+  container on Proxmox and Incus). Names are lower case; values use letters,
+  digits and `. _ : / @ + , = -`. What the test decides itself (`var_ctid`,
+  `var_hostname`, `var_os`, `var_arm64`, storage, network, ...) is refused.
+  `vm/` builds ignore them.
+
+A run on only some platforms or with settings gets its own check name, never
+approves a PR and never lifts an earlier "changes requested".
+
 **A change on `main` here goes live in both repositories at once.** Whoever
 can push here can change what runs with their tokens, so this repository
 needs the same people and the same branch protection as they have.

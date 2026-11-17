@@ -60,6 +60,22 @@ if [[ -n "$TEST_MODE" ]]; then
 fi
 [[ "$PLATFORM" == "pve" || "$SCRIPT" == ct/* ]] || { echo "vm/ scripts run on pve only" >&2; exit 2; }
 [[ "$CTID_BASE" =~ ^[0-9]+$ ]] || { echo "bad CTID_BASE" >&2; exit 2; }
+# App settings from `/test var_<name>=<value> ...`, space separated. The gate
+# checks them already; checked again because they reach two command lines.
+# They go to the build and to both updates; a vm/ build ignores them.
+TEST_ENV="${TEST_ENV:-}"
+test_env=()
+for kv in $TEST_ENV; do
+  [[ "$kv" =~ ^var_[a-z0-9_]{1,40}=[A-Za-z0-9._:/@+,=-]{0,200}$ ]] || { echo "bad TEST_ENV entry" >&2; exit 2; }
+  case "${kv%%=*}" in
+  var_ctid | var_hostname | var_brg | var_bridge | var_net | var_os | var_arm64 | var_container_storage | var_template_storage | \
+    var_testurl | var_verbose | var_full_verbose | var_unattended | var_install)
+    echo "TEST_ENV cannot set ${kv%%=*}" >&2
+    exit 2
+    ;;
+  esac
+  test_env+=("$kv")
+done
 
 mkdir -p "$OUT_DIR"
 RAW_LOG="$OUT_DIR/build.raw.log"
@@ -564,6 +580,11 @@ for name in "${!answers[@]}"; do
   *) echo "Pre-answered ${name}=${value}" ;;
   esac
 done
+# Last, so they win over a pre-answer of the same name (env keeps the last).
+for kv in "${test_env[@]}"; do
+  build_env+=("$kv")
+  echo "Set from /test: ${kv}"
+done
 
 # In the background so that a TERM from a cancelled job is handled at once:
 # bash defers traps until a foreground command returns.
@@ -751,7 +772,7 @@ run_update() {
   # timeout runs a program, not a shell function, so spell out the exec here.
   if [[ "$PLATFORM" == "incus" ]]; then guest_cmd=(incus exec "$ctid" --); else guest_cmd=(pct exec "$ctid" --); fi
   timeout --kill-after=1m "$UPDATE_TIMEOUT" "${guest_cmd[@]}" env PHS_SILENT=1 mode=default MODE=default \
-    TERM=dumb DIAGNOSTICS=no var_ignore_breaking_changes=yes var_ignore_disable=yes var_external_installer=yes ${GH_API_TOKEN:+GITHUB_TOKEN="$GH_API_TOKEN"} update </dev/null \
+    TERM=dumb DIAGNOSTICS=no var_ignore_breaking_changes=yes var_ignore_disable=yes var_external_installer=yes ${GH_API_TOKEN:+GITHUB_TOKEN="$GH_API_TOKEN"} "${test_env[@]}" update </dev/null \
     > >(tee "$raw" | live_filter) 2>&1 &
   update_pid=$!
   wait "$update_pid"
