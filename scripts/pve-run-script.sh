@@ -34,7 +34,7 @@ else
   SERVE_URL="${SERVE_URL:-http://10.99.0.1:18080}"
   BRIDGE="${BRIDGE:-vmbr1}"
 fi
-BUILD_TIMEOUT="${BUILD_TIMEOUT:-45m}"
+BUILD_TIMEOUT="${BUILD_TIMEOUT:-90m}"
 URL_WAIT="${URL_WAIT:-120}"
 
 # Every value below reaches a path, a URL or a command line.

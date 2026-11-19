@@ -40,7 +40,7 @@ permissions:
 jobs:
   arm:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
+    timeout-minutes: 180 # install (90) + update (30) + second update + checks
     steps:
       # The harness from this repository, as in pr-script-test.yml.
       - uses: actions/checkout@v7

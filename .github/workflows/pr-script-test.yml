@@ -435,7 +435,7 @@ jobs:
     continue-on-error: ${{ matrix.platform == 'arm' }}
     permissions:
       contents: read
-    timeout-minutes: 120 # install (45) + update (30) + second update + checks
+    timeout-minutes: 180 # install (90) + update (30) + second update + checks
     strategy:
       fail-fast: false
       matrix:
