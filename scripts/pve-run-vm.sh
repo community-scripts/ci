@@ -120,7 +120,7 @@ vm_build_and_check() {
     url=$(sed -E "s#${ip_re}#${ct_ip}#" <<<"$pattern")
     for ((waited = 0; waited < VM_URL_WAIT; waited += 10)); do
       vm_running || fail "VM ${ctid} stopped by itself while its web UI was awaited"
-      http_code=$(curl -sk -L --max-redirs 5 -o /dev/null -w '%{http_code}' --max-time 10 "$url" || true)
+      http_code=$(curl -sk -L -b /dev/null --max-redirs 5 -o /dev/null -w '%{http_code}' --max-time 10 "$url" || true)
       url_ok "$http_code" && break
       sleep 10
     done

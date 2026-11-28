@@ -708,7 +708,7 @@ check_health() {
   [[ -n "$url" ]] || return 0
   local waited
   for ((waited = 0; waited < URL_WAIT; waited += 5)); do
-    http_code=$(curl -sk -L --max-redirs 5 -o /dev/null -w '%{http_code}' --max-time 10 "$url" || true)
+    http_code=$(curl -sk -L -b /dev/null --max-redirs 5 -o /dev/null -w '%{http_code}' --max-time 10 "$url" || true)
     url_ok "$http_code" && break
     sleep 5
   done
